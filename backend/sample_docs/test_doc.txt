@@ -1,0 +1,2 @@
+This is a test document.
+The RAG FAQ Assistant uses Gemini API to answer questions.

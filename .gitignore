@@ -1,0 +1,20 @@
+# Python virtual environment
+venv/
+*.venv/
+
+# Environment variables (API KEYS!)
+.env
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Local Vector Store (User data, do not commit)
+*.index
+*.pkl
+
+# Local AI Models (These are gigabytes)
+local_models/
+
+# VSCode settings
+.vscode/

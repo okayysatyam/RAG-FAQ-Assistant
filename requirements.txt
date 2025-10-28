@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+requests
+tqdm
+faiss-cpu
+sentence-transformers
+transformers
+torch      # only if using sentence-transformers that requires torch
+pdfminer.six
+beautifulsoup4
+python-dotenv
+pandas
+google-generativeai
+python-dotenv
+PyPDF2
