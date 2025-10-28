@@ -1,0 +1,6 @@
+# Set to "true" to use Google Gemini API, "false" to use local model (e.g., gpt2)
+USE_GEMINI="false" 
+
+# REQUIRED: Get your key from Google AI Studio. 
+# Must be set if USE_GEMINI="true" or if using local embeddings.
+GEMINI_API_KEY=YOUR_SECRET_API_KEY_HERE
