@@ -185,8 +185,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-*(Remember to replace `[Year]` and `[Your Name/Organization]` in the license text)*
-
 -----
 
 ## Acknowledgements
