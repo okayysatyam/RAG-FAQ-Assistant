@@ -27,6 +27,10 @@ responses grounded in the provided knowledge base.
 * **Decoupled Frontend/Backend:** A modern architecture with a Streamlit frontend and FastAPI backend for scalability and maintainability.
 * **Flexible LLM Integration:** Supports both the Google Gemini API (for high-quality generation) and a local fallback model (like GPT-2 or Phi-3) using Hugging Face Transformers, configurable via environment variables.
 * **Real-time Indexing:** Uploaded documents are processed and added to the vector store on the fly.
+* **High-Quality Context Retrieval:** Combines efficient FAISS similarity search with a Cross-Encoder re-ranking model for refined context selection
+* **Production-Ready API:** FastAPI backend with asynchronous endpoints, CORS support, and comprehensive error handling.
+* **Rate Limiting:** Protect APIs from abuse with per-IP rate limiting using `slowapi`. Configurable limits on query and ingestion endpoints.
+* **Modular Architecture:** Clean and understandable separation of embedding, retrieval, re-ranking, and generation logic.
 
 ---
 
@@ -191,7 +195,6 @@ SOFTWARE.
 
   * Libraries: FastAPI, Streamlit, FAISS, Hugging Face Transformers, Google Generative AI SDK, Sentence Transformers, pdfminer.six.
   * Inspiration from various RAG tutorials and implementations available online.
-
 <!-- end list -->
 
 ```
