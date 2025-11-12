@@ -1,23 +1,40 @@
-import torch 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+import torch
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
 import requests 
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
 # --- Crucial Relative Imports ---
-# These imports MUST be relative to work when run as a package
-from .vectorstore import search 
-from .ingest import process_and_index_content 
-from .gemini_utils import generate_answer 
+
+from .vectorstore import search
+from .ingest import process_and_index_content
+from .gemini_utils import generate_answer
+
+# --- Load Config ---
+
+load_dotenv()
+
+USE_GEMINI = os.getenv("USE_GEMINI", "false").lower() == "true"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # --- FastAPI Setup ---
-load_dotenv()
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["100/hour", "10/minute"])
+
 app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- CORS Middleware ---
-origins = ["*"] 
+
+origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -26,100 +43,63 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Global Config / Model Loading ---
-USE_GEMINI = os.getenv("USE_GEMINI", "false").lower() == "true"
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# --- Load Local Generator if Gemini not used ---
 
-# Load the local model ONCE at startup if Gemini is not used
 local_generator = None
+
 if not USE_GEMINI:
     try:
         from transformers import pipeline
-        print("Loading local fallback model (gpt2)...")
+
+        print("Loading local fallback model gpt2...")
         local_generator = pipeline(
             "text-generation",
             model="gpt2",
             trust_remote_code=True,
-            torch_dtype=torch.float32, 
+            torch_dtype=torch.float32,
             device="cpu",
         )
         print("Local model loaded successfully.")
-    except Exception as e:
+    except ImportError:
         local_generator = None
-        print(f"CRITICAL: Failed to load local model: {e}")
-        print("The server will run, but local generation will fail.")
+        print("Could not load local model; transformers package not found.")
 
 
-# --- Pydantic Model ---
+# --- Request Models ---
+
 class QueryRequest(BaseModel):
     question: str
     top_k: int = 4
+    use_reranking: bool = True
 
 
-# --- NEW Endpoint for Document Upload/Ingestion ---
-@app.post("/ingest")
-async def ingest_document(file: UploadFile = File(...)):
-    """Accepts an uploaded file, processes it, and adds chunks to the vector store."""
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file uploaded.")
-
-    try:
-        file_bytes = await file.read()
-        success, message = process_and_index_content(file.filename, file_bytes)
-        
-        if success:
-            return {"status": "success", "message": message, "filename": file.filename}
-        else:
-            raise HTTPException(status_code=400, detail=f"Ingestion failed: {message}")
-
-    except Exception as e:
-        print(f"Ingestion error: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal Server Error during ingestion: {e}")
-
-
-# --- Existing Query Endpoint (NOW CORRECTED) ---
 @app.post("/query")
-def query(req: QueryRequest):
-    # 1. Retrieve context
+@limiter.limit("10/minute")
+async def query(req: QueryRequest, request: Request):
     try:
-        retrieved_chunks = search(req.question, top_k=req.top_k)
-        context = "\n\n".join(retrieved_chunks)
-    except FileNotFoundError:
-        return {"answer": "The knowledge base is empty. Please upload documents first.", "sources": []}
-    except Exception as e:
-        return {"answer": f"Error during document search: {e}", "sources": []}
+        retrieved_chunks = search(req.question, top_k=req.top_k, use_reranking=req.use_reranking)
+        context = "\n\n---\n\n".join(retrieved_chunks)
+        prompt = f"Context: {context}\n\nQuestion: {req.question}\n\nAnswer in a clear and concise way."
 
-    # 2. Build the prompt
-    prompt = f"Based on the following context, answer the question.\n\nContext:\n{context}\n\nQuestion:\n{req.question}\n\nAnswer:"
-
-    # 3. Generate the answer
-    reply = "Could not generate a response."
-
-    # --- THIS ENTIRE BLOCK IS NOW CORRECTLY PLACED *INSIDE* THE 'query' FUNCTION ---
-    if USE_GEMINI and GEMINI_API_KEY:
-        # This code block executes *only* when the /query endpoint is called
-        rag_prompt = f"Context: {context}\n\nQuestion: {req.question}\n\nAnswer:"
-        
-        try:
-            # We call the 'generate_answer' function imported at the top
-            reply = generate_answer(rag_prompt)
-        except Exception as e:
-            reply = f"Error calling Gemini API: {e}. Check API key and quota."
-            
-    else:
-        # Use the local fallback model
-        if local_generator:
-            try:
-                # Use the 'local_generator' model loaded at startup
-                out = local_generator(prompt, max_length=256, num_return_sequences=1)
-                if out and out[0]:
-                    generated_text = out[0]["generated_text"]
-                    reply = generated_text[len(prompt) :].strip()
-            except Exception as e:
-                reply = f"Error during local model generation: {e}"
+        if USE_GEMINI and GEMINI_API_KEY:
+            answer = generate_answer(prompt)
+        elif local_generator:
+            outputs = local_generator(prompt, max_length=200)
+            answer = outputs[0]["generated_text"]
         else:
-            reply = "Local model is unavailable. Check startup logs for errors."
-    # --- END OF MOVED BLOCK ---
+            raise HTTPException(status_code=503, detail="No LLM backend available")
 
-    # 4. Return the final response
-    return {"answer": reply, "sources": retrieved_chunks}
+        return {"answer": answer}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ingest")
+@limiter.limit("5/hour")
+async def ingest_document(file: UploadFile = File(...), request: Request = None):
+    try:
+        contents = await file.read()
+        await process_and_index_content(contents.decode("utf-8"))
+        return {"detail": "Document ingested successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
